@@ -1,0 +1,105 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "debezium.name" . }}
+  labels:
+    {{- include "debezium.labels" . | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "debezium.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      annotations:
+        checksum/config: {{ toJson .Values | sha256sum }}
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "9071"
+      labels:
+        {{- include "debezium.selectorLabels" . | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      imagePullSecrets:
+      - name: gitlab-docker-registry
+      volumes:
+      - name: opt-prometheus
+        emptyDir: {}
+      - name: kafka-config
+        configMap:
+          name: {{ include "debezium.name" . }}
+          defaultMode: 0744
+      - name: kafka-secret
+        secret:
+          secretName: {{ include "debezium.name" . }}
+          defaultMode: 0744
+      initContainers:
+      - name: ensure-kafka-topics
+        image: confluentinc/cp-kafka:latest
+        volumeMounts:
+        - name: kafka-config
+          mountPath: /opt/debezium/kafka.sh
+          subPath: kafka.sh
+        - name: kafka-config
+          mountPath: /kafka/config/admin.properties
+          subPath: admin.properties
+        command: ["/bin/sh", "-c", "chmod +x /opt/debezium/kafka.sh && /opt/debezium/kafka.sh"]
+      containers:
+      - name: debezium-connect
+        image: {{ .Values.debezium.image }}
+        securityContext:
+          capabilities:
+            drop: [ALL]
+        volumeMounts:
+        - name: kafka-config
+          mountPath: /etc/debezium/connector.json
+          subPath: connector.json
+        - name: kafka-config
+          mountPath: /etc/prometheus/jmx_exporter.yml
+          subPath: jmx_exporter.yml
+        - name: kafka-config
+          mountPath: /kafka/config/log4j.properties
+          subPath: log4j.properties
+        - name: kafka-config
+          mountPath: /kafka/config/connect-distributed.properties
+          subPath: connect-distributed.properties
+        - name: kafka-secret
+          mountPath: /etc/kafka/jaas.conf
+          subPath: jaas.conf
+        - name: opt-prometheus
+          mountPath: /opt/prometheus
+        env:
+        - name: KAFKA_OPTS
+          value: "-Djava.security.auth.login.config=/etc/kafka/jaas.conf -javaagent:/opt/prometheus/jmx_exporter_javaagent.jar=9071:/etc/prometheus/jmx_exporter.yml"
+        - name: KAFKA_USERNAME
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "debezium.name" . }}
+              key: username
+        - name: KAFKA_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "debezium.name" . }}
+              key: password
+        command: ["/kafka/bin/connect-distributed.sh", "/kafka/config/connect-distributed.properties"]
+        livenessProbe:
+          httpGet:
+            path: /connectors
+            port: 8083
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /connectors
+            port: 8083
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        resources:
+          requests:
+            cpu: {{ .Values.resources.requests.cpu }}
+            memory: {{ .Values.resources.requests.memory }}
+          limits:
+            cpu: {{ .Values.resources.limits.cpu }}
+            memory: {{ .Values.resources.limits.memory }}

@@ -1,0 +1,54 @@
+log_level: error
+kafka_heap_opts: -Xms256m -Xmx2g
+kafka_jvm_performance_opts: -server -XX:+UseG1GC -XX:MetaspaceSize=96m -XX:MaxGCPauseMillis=20 -XX:InitiatingHeapOccupancyPercent=35 -XX:+ExplicitGCInvokesConcurrent -XX:G1HeapRegionSize=16M -XX:MinMetaspaceFreeRatio=50 -XX:MaxMetaspaceFreeRatio=80 -XX:MaxInlineLevel=15 -Djava.awt.headless=true
+
+debezium:
+  name: "debezium-connector"
+  image: "debezium/connect:1.7.1.Final"
+  properties:
+    group_id: "debezium-group"
+    topics_basename: "debezium.mssql"
+  connector:
+    name: "mssql-connector"
+    config:
+      connector.class: "io.debezium.connector.sqlserver.SqlServerConnector"
+      database.hostname: "mssql-server"
+      database.port: "1433"
+      database.user: "debezium"
+      database.password: "debezium-password"
+      database.dbname: "my_database"
+      database.server.name: "mssql-server"
+      table.include.list: "dbo.customers,dbo.orders"
+      database.history.kafka.bootstrap.servers: "kafka-bootstrap:9092"
+      database.history.kafka.topic: "schema-changes.mssql"
+      decimal.handling.mode: "double"
+      snapshot.mode: "schema_only"
+      tasks.max: "1"
+      include.schema.changes: "true"
+      schema.history.internal.kafka.bootstrap.servers: "kafka-bootstrap:9092"
+      schema.history.internal.kafka.topic: "schema-changes-history"
+
+kafka:
+  ssl_enabled: false
+  bootstrap_servers: "kafka-bootstrap:9092"
+  authentication:
+    username: "my-kafka-user"
+    password: "my-secure-password"
+    jaas_conf: |
+      org.apache.kafka.common.security.scram.ScramLoginModule required
+      username="my-kafka-user"
+      password="my-secure-password";
+
+resources:
+  requests:
+    cpu: "0.1"
+    memory: "512Mi"
+  limits:
+    cpu: "1"
+    memory: "1Gi"
+
+monitoring:
+  enabled: true
+  prometheus:
+    scrape: true
+    port: 9071
